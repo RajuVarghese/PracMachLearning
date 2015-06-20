@@ -1,0 +1,145 @@
+---
+title: "ds8-project"
+author: "Raju Varghese"
+date: "06/18/2015"
+output: html_document
+---
+
+# Project: Practical Machine Learning course
+
+## Aim
+This is the project report for the Coursera Data Science course **Practical Machine Learning**. The [project](https://class.coursera.org/predmachlearn-015/human_grading/view/courses/973550/assessments/4/submissions) requires students to analyze a CSV file (ie the training set) containing data from sensors placed on 6 persons who were then asked to perform barbell lifts (original source: [Human Activity Research](http://groupware.les.inf.puc-rio.br/har) at a university in Rio de Janiero, Brazil). The aim of the course is to use similar sensor data (ie the test set) to predict the activity and to submit that for evaluation by the course organizers.
+
+## Summary
+The project uses the *Random Forest* method to classify the 5 activities the persons were asked to perform. The supplied training data was split into two, a subset for training the model and the rest for running validation of the model. Cross validation was done and the accuracy of the model on the validation set was a commendable XXX. 
+
+## Introduction
+As there are many machine learning algorithms the first step is to find the appropriate one for the job at hand. It is obvious that this is a job for supervised learning as there is a training set with labels that have been assigned. Looking through the data cursorily as well as reading through the project description one leads one to the conclusion that this is a classification problem: the expected result is the labeling of an activity. Therefore, it is *not* a regression problem where a continuous value is to be predicted. Of the methods at ones disposal the Random Forest method has been cited often in current literature as a good one for classification. As will be seen later, I was more than satisfied with that choice.
+
+## Data Input and Exploration
+The project page has the URLs for the [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and [testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) data. These were downloaded to the machine and stored on the disk.
+
+```{r}
+f <- read.csv ("pml-training.csv")
+dim (f)
+```
+
+Looking through the data one can see that there are many columns with blanks, NA or cells of the form "#DIV/0!". With *summary* these columns are made plain. Further, the initial columns are not sensor data but those that identify where it came from or the time they were collected. For modelling these are useless.
+
+```{r eval=F}
+summary (f)
+```
+
+
+## Data Preparation
+The two types of columns mentioned above are listed below in the variable *excl*.
+
+```{r}
+excl <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp",
+          "new_window", "num_window",
+          "kurtosis_yaw_belt", "skewness_yaw_belt", "kurtosis_yaw_dumbbell", "skewness_yaw_dumbbell",
+          "amplitude_yaw_forearm", "skewness_yaw_forearm", "kurtosis_yaw_forearm", "amplitude_yaw_dumbbell",
+          "amplitude_yaw_dumbbell", "kurtosis_picth_arm", "kurtosis_yaw_arm", "skewness_roll_arm",
+          "skewness_pitch_arm", "skewness_yaw_arm", "kurtosis_roll_belt", "kurtosis_picth_belt",
+          "skewness_roll_belt", "skewness_roll_belt.1", "max_yaw_belt", "max_roll_belt, max_picth_belt",
+          "max_yaw_belt", "min_roll_belt", "min_pitch_belt, min_yaw_belt", "amplitude_roll_belt",
+          "amplitude_pitch_belt", "amplitude_yaw_belt", "var_total_accel_belt", "avg_roll_belt",
+          "stddev_roll_belt", "var_roll_belt", "avg_pitch_belt", "stddev_pitch_belt",
+          "var_pitch_belt", "avg_yaw_belt", "stddev_yaw_belt, var_yaw_belt", "var_accel_arm",
+          "avg_roll_arm", "stddev_roll_arm", "var_roll_arm", "avg_pitch_arm", "stddev_pitch_arm",
+          "var_pitch_arm", "avg_yaw_arm", "stddev_yaw_arm", "var_yaw_arm", "kurtosis_roll_arm",
+          "max_roll_arm", "max_picth_arm", "max_yaw_arm", "min_roll_arm", "min_pitch_arm", 
+          "min_yaw_arm", "amplitude_roll_arm", "amplitude_pitch_arm", "amplitude_yaw_arm",
+          "kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "skewness_roll_dumbbell",
+          "skewness_pitch_dumbbell", "max_roll_dumbbell", "max_picth_dumbbell", "max_yaw_dumbbell",
+          "min_roll_dumbbell", "min_pitch_dumbbell", "min_yaw_dumbbell", "amplitude_roll_dumbbell",
+          "amplitude_pitch_dumbbell", "var_accel_dumbbell", "avg_roll_dumbbell", "stddev_roll_dumbbell",
+          "var_roll_dumbbell", "avg_pitch_dumbbell", "stddev_pitch_dumbbell", "var_pitch_dumbbell",
+          "avg_yaw_dumbbell", "stddev_yaw_dumbbell", "var_yaw_dumbbell", "kurtosis_roll_forearm",
+          "kurtosis_picth_forearm", "skewness_roll_forearm", "skewness_pitch_forearm", "max_roll_forearm",
+          "max_yaw_forearm", "min_roll_forearm", "min_pitch_forearm", "min_yaw_forearm",
+          "amplitude_roll_forearm", "amplitude_pitch_forearm", "var_accel_forearm", "avg_roll_forearm",
+          "stddev_roll_forearm", "var_roll_forearm", "avg_pitch_forearm", "stddev_pitch_forearm",
+          "var_pitch_forearm", "avg_yaw_forearm", "stddev_yaw_forearm", "var_yaw_forearm",
+          "stddev_yaw_belt", "max_picth_forearm", "max_roll_belt", "max_picth_belt", "min_pitch_belt",
+          "min_yaw_belt", "var_yaw_belt")
+
+exclVars <- names(f) %in% excl
+fClean <- f [!exclVars]
+```
+
+The variable *fClean* now contains the data that we will henceforth be working with. This is split into a training and a validation subset. As modelling is resource intensive (CPU and memory) it behooves one to pick a small training subset but one that is sufficient for the required accuracy. The code here picks just 20% of the training subset. This is a trade-off figure that can easily be increased should the validation show that the accuracy is low.
+
+
+```{r message=F}
+library (caret)
+library (randomForest)
+library (doParallel)
+set.seed (42)
+```
+
+```{r}
+inTrain <- createDataPartition (fClean$classe, p=0.20, list=F)
+trainingSamples = fClean [ inTrain,]
+validationSamples = fClean [-inTrain,]
+```
+
+NOTE: the original training data that was downloaded is split into two that are called trainingSamples and validationSamples.
+
+## Modelling
+The training data set is now going to be put through the *random forest* function where several decision trees will be evaluated. The *training control* sub-function specifies 5 fold *cross validation*. To speed up the overall process the code below will run in parallel on all the CPU cores of the workstation. On my machine with 4 CPU cores, this chunk of code takes 220 seconds.
+
+```{r}
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+model<-train (classe ~ ., data=trainingSamples, method="rf",
+              trControl=trainControl (method="cv", number=5),
+              prox=T, importance=T, allowParallel=T)
+stopCluster(cl)
+model
+```
+
+The estimated accuracy is 0.972 (under the column Accuracy for mtry 27 which is the final model that was selected). The RMSE (root mean square error) of the models is plotted below.
+
+```{r}
+plot (model$finalModel, main="Model Error")
+```
+
+As a matter of interest, the most important variables are shown below.
+
+```{r}
+varImpPlot (model$finalModel, main="Important variables of the model", n.var=15)
+```
+
+## Prediction and Validation
+Based on the model above we get to the final stage, prediction.
+
+```{r}
+res <- predict (model, validationSamples)
+confusionMatrix (res, validationSamples [, c ("classe")])
+```
+
+The actual accuracy with the validation set is 0.976.
+
+## Result Submission
+As I am satisfied with the model I can now run it on the test data provided.
+
+```{r}
+test <- read.csv ("pml-testing.csv")
+test.result <- predict (model, test)
+
+pml_write_files = function (x) {
+  n = length (x)
+  for (i in 1:n) {
+    filename = paste0 ("problem_id_", i, ".txt")
+    path = file.path ("../answers", filename)
+    write.table(x[i],file=path, quote=F, row.names=F, col.names=F)
+  }
+}
+pml_write_files (test.result)
+```
+
+
+## Conclusion
+Though the time needed for modelling is high the accuracy of the prediction is high as well. There was not enough time to figure out how to evaluate different resampling algorithms. Frankly, I am astounded and pleased with the accuracy.
+
